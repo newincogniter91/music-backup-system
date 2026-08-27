@@ -1,0 +1,39 @@
+name: Build APK
+
+# Si attiva ad ogni push su main e può anche essere lanciato a mano
+# dalla scheda "Actions" del repository su GitHub.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del codice
+        uses: actions/checkout@v4
+
+      - name: Imposta Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Imposta Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Installa dipendenze
+        run: flutter pub get
+
+      - name: Compila APK (release)
+        run: flutter build apk --release
+
+      - name: Carica APK come artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: music-backup-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
