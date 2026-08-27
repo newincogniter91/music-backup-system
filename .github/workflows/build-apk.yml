@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APK + Server
 
 # Si attiva ad ogni push su main e può anche essere lanciato a mano
 # dalla scheda "Actions" del repository su GitHub.
@@ -8,11 +8,11 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  build:
+  build-apk:
     runs-on: ubuntu-latest
 
     # Tutti gli step "run" partono da qui: il progetto Flutter vive in
-    # questa sottocartella, separata dal server che arriverà più avanti.
+    # questa sottocartella, separata dal server.
     defaults:
       run:
         working-directory: music_backup_app
@@ -44,3 +44,35 @@ jobs:
         with:
           name: music-backup-apk
           path: music_backup_app/build/app/outputs/flutter-apk/app-release.apk
+
+  build-server:
+    runs-on: ubuntu-latest
+
+    # Il server vive nella sua cartella separata, indipendente dall'app.
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - name: Checkout del codice
+        uses: actions/checkout@v4
+
+      - name: Imposta Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installa dipendenze
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Compila eseguibile Linux
+        run: pyinstaller --onefile --name music-backup-server server.py
+
+      - name: Carica eseguibile come artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: music-backup-server
+          path: server/dist/music-backup-server
