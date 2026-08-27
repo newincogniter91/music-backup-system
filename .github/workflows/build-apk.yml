@@ -1,5 +1,7 @@
 name: Build APK
 
+# Si attiva ad ogni push su main e può anche essere lanciato a mano
+# dalla scheda "Actions" del repository su GitHub.
 on:
   push:
     branches: [ main ]
@@ -9,6 +11,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # Tutti gli step "run" partono da qui: il progetto Flutter vive in
+    # questa sottocartella, separata dal server che arriverà più avanti.
     defaults:
       run:
         working-directory: music_backup_app
