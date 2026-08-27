@@ -1,7 +1,5 @@
 name: Build APK
 
-# Si attiva ad ogni push su main e può anche essere lanciato a mano
-# dalla scheda "Actions" del repository su GitHub.
 on:
   push:
     branches: [ main ]
@@ -10,6 +8,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: music_backup_app
 
     steps:
       - name: Checkout del codice
@@ -36,4 +38,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: music-backup-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: music_backup_app/build/app/outputs/flutter-apk/app-release.apk
