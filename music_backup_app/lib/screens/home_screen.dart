@@ -71,10 +71,12 @@ class _HomeScreenState extends State<HomeScreen> {
         return 'Scansione file in corso...';
       case BackupStatus.uploading:
         return 'Caricamento: ${p.currentFile}\n${p.completed}/${p.total}';
+      case BackupStatus.downloading:
+        return 'Scaricamento: ${p.currentFile}\n${p.completed}/${p.total}';
       case BackupStatus.done:
         return p.total == 0
-            ? 'Nessun file audio trovato'
-            : 'Backup completato: ${p.completed}/${p.total} file';
+            ? 'Tutto già sincronizzato'
+            : 'Sincronizzazione completata: ${p.uploaded} inviati, ${p.downloaded} scaricati';
       case BackupStatus.error:
         return p.errorMessage ?? 'Errore sconosciuto';
     }

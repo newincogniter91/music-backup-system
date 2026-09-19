@@ -2,7 +2,7 @@
 
 Sistema per il backup automatico della musica dal telefono Android al PC, via rete privata Tailscale. Composto da due parti in questo stesso repo:
 
-- **`music_backup_app/`** — app Android (Flutter) che scansiona Download/Music e invia i file audio (`.mp3`, `.m4a`) al server
+- **`music_backup_app/`** — app Android (Flutter) che scansiona Download/Music e sincronizza i file audio (`.mp3`, `.m4a`) col server, nei due sensi: invia quelli che mancano al server e scarica in Music quelli che mancano al telefono
 - **`server/`** — server Linux (Python) che riceve i file, li salva, evita i doppioni, ed espone una dashboard web
 
 Nessun file viene mai eliminato, né lato app né lato server: solo aggiunte.
@@ -35,7 +35,10 @@ APK in `build/app/outputs/flutter-apk/app-release.apk`. Serve Flutter **3.38.0**
 
 - UI: bottone BACKUP circolare + barra di avanzamento; impostazioni con IP/porta del server e tema chiaro/scuro
 - Scansiona ricorsivamente `Download` e `Music`, cerca `.mp3`/`.m4a`
-- Ogni file trovato viene inviato con `POST http://<ip>:<porta>/upload`, corpo `multipart/form-data`, campo `file`
+- Prima chiede al server l'elenco dei suoi file (`GET /list`) e trasferisce **solo ciò che manca**, nei due sensi. Il confronto usa nome e dimensione, e se non basta l'hash SHA-256 del contenuto
+- Upload: ogni file che il server non ha viene inviato con `POST http://<ip>:<porta>/upload`, corpo `multipart/form-data`, campo `file`
+- Download: ogni file che il telefono non ha viene scaricato con `GET /download/<id>` nella cartella `Music` (prima come `.part`, rinominato solo a download completo; se esiste già un file con lo stesso nome ma contenuto diverso, usa il suffisso `__<hash>`)
+- Se cancelli un brano dal telefono ma è ancora sul server, al backup successivo viene riscaricato
 - Richiede il permesso Android **"Gestisci tutti i file"** (`MANAGE_EXTERNAL_STORAGE`), attivabile al primo tap su BACKUP
 - IP e porta del server sono configurabili dalle Impostazioni, senza bisogno di ricompilare
 
@@ -91,6 +94,21 @@ Indirizzo di ascolto di default: `0.0.0.0` (tutte le interfacce, incluso Tailsca
 - form impostazioni: cartella di salvataggio, indirizzo di ascolto, porta di backup, porta dashboard
 
 La cartella di salvataggio si applica subito; indirizzo e porte richiedono un riavvio del servizio. La porta 80 non è ammessa (richiede permessi di amministratore).
+
+### Database dei file
+
+Il server tiene un database SQLite (`library.db`, accanto all'eseguibile) con i file audio presenti nella cartella di salvataggio: nome sul disco, nome originale, dimensione, hash SHA-256. SQLite è incluso in Python: nessuna app o servizio da installare.
+
+- viene allineato alla cartella all'avvio, ad ogni `GET /list` e quando cambi la cartella dalla dashboard: i file copiati a mano sul server vengono registrati, le righe di file spariti dal disco vengono tolte (così l'app li rimanda)
+- il server non elimina mai file dal disco: il database viene solo sincronizzato con quello che c'è
+
+Endpoint del servizio di backup:
+
+| Metodo | Percorso | Uso |
+|---|---|---|
+| `GET` | `/list` | elenco dei file presenti sul server (id, nome, dimensione, hash) |
+| `POST` | `/upload` | riceve un file dal telefono |
+| `GET` | `/download/<id>` | invia un file al telefono |
 
 ### Gestione doppioni
 
