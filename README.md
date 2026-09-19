@@ -2,7 +2,7 @@
 
 Sistema per il backup automatico della musica dal telefono Android al PC, via rete privata Tailscale. Composto da due parti in questo stesso repo:
 
-- **`music_backup_app/`** — app Android (Flutter) che scansiona Download/Music e sincronizza i file audio (`.mp3`, `.m4a`) col server, nei due sensi: invia quelli che mancano al server e scarica in Music quelli che mancano al telefono
+- **`music_backup_app/`** — app Android (Flutter) che scansiona Download/Music (memoria interna e SD) e sincronizza i file audio (`.mp3`, `.m4a`) col server, nei due sensi, con due pulsanti separati: **Upload** invia al server i file che mancano, **Download** scarica in Music quelli che mancano al telefono
 - **`server/`** — server Linux (Python) che riceve i file, li salva, evita i doppioni, ed espone una dashboard web
 
 Nessun file viene mai eliminato, né lato app né lato server: solo aggiunte.
@@ -34,11 +34,12 @@ APK in `build/app/outputs/flutter-apk/app-release.apk`. Serve Flutter **3.38.0**
 ### Come funziona
 
 - UI: bottone BACKUP circolare + barra di avanzamento; impostazioni con IP/porta del server e tema chiaro/scuro
-- Scansiona ricorsivamente `Download` e `Music`, cerca `.mp3`/`.m4a`
-- Prima chiede al server l'elenco dei suoi file (`GET /list`) e trasferisce **solo ciò che manca**, nei due sensi. Il confronto usa nome e dimensione, e se non basta l'hash SHA-256 del contenuto
-- Upload: ogni file che il server non ha viene inviato con `POST http://<ip>:<porta>/upload`, corpo `multipart/form-data`, campo `file`
-- Download: ogni file che il telefono non ha viene scaricato con `GET /download/<id>` nella cartella `Music` (prima come `.part`, rinominato solo a download completo; se esiste già un file con lo stesso nome ma contenuto diverso, usa il suffisso `__<hash>`)
-- Se cancelli un brano dal telefono ma è ancora sul server, al backup successivo viene riscaricato
+- Upload: scansiona ricorsivamente `Download` e `Music`, sia della memoria interna sia delle SD, cerca `.mp3`/`.m4a`
+- Download: per sapere cosa il telefono ha già cerca `.mp3`/`.m4a` in **qualsiasi cartella** della memoria interna e delle SD (escluse `Android/` e le cartelle nascoste); un brano già presente altrove non viene riscaricato
+- Sia Upload che Download chiedono prima al server l'elenco dei suoi file (`GET /list`) e trasferiscono **solo ciò che manca**. Il confronto usa nome e dimensione, e se non basta l'hash SHA-256 del contenuto
+- Pulsante Upload: ogni file che il server non ha viene inviato con `POST http://<ip>:<porta>/upload`, corpo `multipart/form-data`, campo `file`
+- Pulsante Download: ogni file che il telefono non ha viene scaricato con `GET /download/<id>` nella cartella `Music`. È una copia identica byte per byte, senza ricodifica: viene scritta come `.part`, verificata (dimensione e SHA-256 uguali all'originale) e solo allora rinominata; poi Android viene avvisato del file nuovo, così i lettori musicali lo vedono. Se esiste già un file con lo stesso nome ma contenuto diverso, usa il suffisso `__<hash>`
+- Se cancelli un brano dal telefono ma è ancora sul server, al Download successivo viene riscaricato
 - Richiede il permesso Android **"Gestisci tutti i file"** (`MANAGE_EXTERNAL_STORAGE`), attivabile al primo tap su BACKUP
 - IP e porta del server sono configurabili dalle Impostazioni, senza bisogno di ricompilare
 
