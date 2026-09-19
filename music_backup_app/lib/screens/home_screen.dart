@@ -210,6 +210,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 style: theme.textTheme.bodyMedium,
               ),
             ),
+            const SizedBox(height: 24),
+            // Versione della build, per riconoscere quale APK sta girando.
+            // Va tenuta uguale a `version:` in pubspec.yaml.
+            Text('v1.0.1+2', style: theme.textTheme.bodySmall),
           ],
         ),
       ),
