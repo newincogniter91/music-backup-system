@@ -4,8 +4,7 @@ Music Backup Server
 
 Espone due servizi HTTP separati, su porte indipendenti:
   - servizio di backup: riceve i file audio inviati dall'app Android
-    (POST /upload, campo multipart "file"), elenca i file presenti
-    (GET /list) e li rende scaricabili dall'app (GET /download/<id>)
+    (POST /upload, campo multipart "file")
   - dashboard: pagina web con stato (ultimo backup, IP di provenienza,
     numero di file salvati) e impostazioni (cartella di salvataggio,
     indirizzo di ascolto, porte)
@@ -17,14 +16,13 @@ compilato con PyInstaller.
 import asyncio
 import hashlib
 import json
-import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Form, Request, UploadFile, File
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 # ---------------------------------------------------------------------------
 # Percorsi base: sia in esecuzione come script sia come binario PyInstaller,
@@ -37,10 +35,6 @@ else:
 
 CONFIG_PATH = BASE_DIR / "config.json"
 STATE_PATH = BASE_DIR / "state.json"
-DB_PATH = BASE_DIR / "library.db"
-
-# Estensioni gestite: le stesse che l'app cerca sul telefono.
-AUDIO_EXTENSIONS = {".mp3", ".m4a"}
 
 DEFAULT_CONFIG = {
     "save_path": str(BASE_DIR / "musica_ricevuta"),
@@ -82,89 +76,6 @@ config = load_config()
 state = load_state()
 
 
-# ---------------------------------------------------------------------------
-# Database dei file presenti sul server (SQLite: incluso in Python, nessuna
-# app o servizio extra; un solo file, library.db, accanto all'eseguibile).
-# stored_name   = nome reale sul disco (può avere il suffisso __hash)
-# original_name = nome con cui il file è arrivato dal telefono
-# ---------------------------------------------------------------------------
-db = sqlite3.connect(DB_PATH, check_same_thread=False)
-db.execute(
-    """CREATE TABLE IF NOT EXISTS files (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        stored_name TEXT NOT NULL UNIQUE,
-        original_name TEXT NOT NULL,
-        size INTEGER NOT NULL,
-        sha256 TEXT NOT NULL,
-        added_at TEXT NOT NULL
-    )"""
-)
-db.execute("CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files(sha256)")
-db.commit()
-
-
-def sha256_of_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def register_file(stored_name: str, original_name: str, size: int, sha256: str):
-    if Path(stored_name).suffix.lower() not in AUDIO_EXTENSIONS:
-        return
-    try:
-        db.execute(
-            "INSERT INTO files (stored_name, original_name, size, sha256, added_at) VALUES (?, ?, ?, ?, ?)",
-            (stored_name, original_name, size, sha256, datetime.now().isoformat(timespec="seconds")),
-        )
-        db.commit()
-    except sqlite3.IntegrityError:
-        pass  # già registrato
-
-
-def sync_db():
-    """Allinea il database alla cartella di salvataggio.
-
-    - file presenti sul disco ma non nel database (es. copiati a mano, o
-      arrivati prima dell'introduzione del database) -> vengono registrati;
-    - righe il cui file non esiste più (o è cambiato di dimensione) -> tolte,
-      così l'app sa che quel file manca e lo rimanda.
-    Non elimina mai file dal disco. L'hash si calcola solo per i file nuovi.
-    """
-    save_dir = Path(config["save_path"])
-    if not save_dir.is_dir():
-        return
-    try:
-        on_disk = {
-            p.name: p.stat().st_size
-            for p in save_dir.iterdir()
-            if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS
-        }
-    except OSError:
-        return
-
-    known = set()
-    for row_id, stored_name, size in db.execute("SELECT id, stored_name, size FROM files").fetchall():
-        if on_disk.get(stored_name) == size:
-            known.add(stored_name)
-        else:
-            db.execute("DELETE FROM files WHERE id = ?", (row_id,))
-    db.commit()
-
-    for name, size in on_disk.items():
-        if name in known:
-            continue
-        try:
-            register_file(name, name, size, sha256_of_file(save_dir / name))
-        except OSError:
-            continue
-
-
-sync_db()
-
-
 def record_backup(request: Request):
     state["last_backup_time"] = datetime.now().isoformat(timespec="seconds")
     state["last_backup_ip"] = request.client.host if request.client else "sconosciuto"
@@ -202,7 +113,6 @@ async def upload(request: Request, file: UploadFile = File(...)):
 
         if existing_hash == incoming_hash:
             # File identico già presente: non riscrivere, evita doppioni.
-            register_file(target_path.name, file.filename, len(content), incoming_hash)
             record_backup(request)
             return {"status": "skipped", "reason": "duplicate", "filename": file.filename}
 
@@ -215,36 +125,8 @@ async def upload(request: Request, file: UploadFile = File(...)):
     except OSError as e:
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
-    register_file(target_path.name, file.filename, len(content), incoming_hash)
     record_backup(request)
     return {"status": "saved", "filename": target_path.name}
-
-
-@backup_app.get("/list")
-async def list_files():
-    """Elenco dei file presenti sul server (dal database)."""
-    sync_db()
-    rows = db.execute(
-        "SELECT id, stored_name, original_name, size, sha256 FROM files ORDER BY stored_name"
-    ).fetchall()
-    return {
-        "files": [
-            {"id": r[0], "name": r[1], "original_name": r[2], "size": r[3], "sha256": r[4]}
-            for r in rows
-        ]
-    }
-
-
-@backup_app.get("/download/{file_id}")
-async def download(file_id: int):
-    """Scarica un file per id (l'id viene dal database, mai un percorso libero)."""
-    row = db.execute("SELECT stored_name FROM files WHERE id = ?", (file_id,)).fetchone()
-    if row is None:
-        return JSONResponse(status_code=404, content={"status": "error", "detail": "file non trovato"})
-    path = Path(config["save_path"]) / row[0]
-    if not path.is_file():
-        return JSONResponse(status_code=404, content={"status": "error", "detail": "file non presente su disco"})
-    return FileResponse(path, filename=row[0])
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +225,6 @@ async def update_settings(
     config["save_path"] = save_path
     config["bind_host"] = bind_host
     save_config(config)
-    sync_db()
 
     if warnings:
         msg = " ".join(warnings)

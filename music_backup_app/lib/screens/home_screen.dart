@@ -3,8 +3,6 @@ import 'package:permission_handler/permission_handler.dart';
 import '../services/backup_service.dart';
 import 'settings_screen.dart';
 
-enum _Action { upload, download }
-
 class HomeScreen extends StatefulWidget {
   final ValueChanged<bool> onThemeChanged;
   const HomeScreen({super.key, required this.onThemeChanged});
@@ -16,7 +14,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   BackupProgress? _progress;
   bool _isRunning = false;
-  _Action _action = _Action.upload; // ultima azione avviata
 
   /// Su Android 11+ serve il permesso "Gestisci tutti i file" per
   /// leggere direttamente le cartelle Download/Music. Questo permesso
@@ -29,7 +26,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return result.isGranted;
   }
 
-  Future<void> _start(_Action action) async {
+  Future<void> _startBackup() async {
     if (_isRunning) return;
 
     final granted = await _ensurePermissions();
@@ -44,16 +41,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     setState(() {
-      _action = action;
       _isRunning = true;
       _progress = null;
     });
 
-    final stream = action == _Action.upload
-        ? BackupService.runUpload()
-        : BackupService.runDownload();
-
-    await for (final progress in stream) {
+    await for (final progress in BackupService.runBackup()) {
       if (!mounted) return;
       setState(() {
         _progress = progress;
@@ -79,75 +71,13 @@ class _HomeScreenState extends State<HomeScreen> {
         return 'Scansione file in corso...';
       case BackupStatus.uploading:
         return 'Caricamento: ${p.currentFile}\n${p.completed}/${p.total}';
-      case BackupStatus.downloading:
-        return 'Scaricamento: ${p.currentFile}\n${p.completed}/${p.total}';
       case BackupStatus.done:
-        if (_action == _Action.upload) {
-          return p.total == 0
-              ? 'Niente da caricare: il server ha già tutto'
-              : 'Upload completato: ${p.uploaded} file inviati';
-        }
         return p.total == 0
-            ? 'Niente da scaricare: hai già tutto'
-            : 'Download completato: ${p.downloaded} file scaricati';
+            ? 'Nessun file audio trovato'
+            : 'Backup completato: ${p.completed}/${p.total} file';
       case BackupStatus.error:
         return p.errorMessage ?? 'Errore sconosciuto';
     }
-  }
-
-  Widget _buildActionButton(
-    ThemeData theme,
-    _Action action,
-    IconData icon,
-    String label,
-  ) {
-    final isThisRunning = _isRunning && _action == action;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        GestureDetector(
-          onTap: _isRunning ? null : () => _start(action),
-          child: Container(
-            width: 140,
-            height: 140,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _isRunning
-                  ? theme.colorScheme.surfaceVariant
-                  : theme.colorScheme.primary,
-              boxShadow: [
-                BoxShadow(
-                  color: theme.colorScheme.primary.withOpacity(0.4),
-                  blurRadius: 20,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
-            child: Center(
-              child: isThisRunning
-                  ? SizedBox(
-                      width: 48,
-                      height: 48,
-                      child: CircularProgressIndicator(
-                        value: _percent > 0 ? _percent : null,
-                        color: theme.colorScheme.onPrimary,
-                        strokeWidth: 4,
-                      ),
-                    )
-                  : Icon(
-                      icon,
-                      size: 56,
-                      color: _isRunning
-                          ? theme.colorScheme.onSurfaceVariant
-                          : theme.colorScheme.onPrimary,
-                    ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Text(label, style: theme.textTheme.titleMedium),
-      ],
-    );
   }
 
   @override
@@ -173,22 +103,42 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildActionButton(
-                  theme,
-                  _Action.upload,
-                  Icons.cloud_upload,
-                  'Upload',
+            GestureDetector(
+              onTap: _isRunning ? null : _startBackup,
+              child: Container(
+                width: 180,
+                height: 180,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _isRunning
+                      ? theme.colorScheme.surfaceVariant
+                      : theme.colorScheme.primary,
+                  boxShadow: [
+                    BoxShadow(
+                      color: theme.colorScheme.primary.withOpacity(0.4),
+                      blurRadius: 20,
+                      spreadRadius: 2,
+                    ),
+                  ],
                 ),
-                _buildActionButton(
-                  theme,
-                  _Action.download,
-                  Icons.cloud_download,
-                  'Download',
+                child: Center(
+                  child: _isRunning
+                      ? SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: CircularProgressIndicator(
+                            value: _percent > 0 ? _percent : null,
+                            color: theme.colorScheme.onPrimary,
+                            strokeWidth: 4,
+                          ),
+                        )
+                      : Icon(
+                          Icons.backup,
+                          size: 64,
+                          color: theme.colorScheme.onPrimary,
+                        ),
                 ),
-              ],
+              ),
             ),
             const SizedBox(height: 32),
             Padding(
@@ -210,10 +160,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 style: theme.textTheme.bodyMedium,
               ),
             ),
-            const SizedBox(height: 24),
-            // Versione della build, per riconoscere quale APK sta girando.
-            // Va tenuta uguale a `version:` in pubspec.yaml.
-            Text('v1.0.1+2', style: theme.textTheme.bodySmall),
           ],
         ),
       ),
