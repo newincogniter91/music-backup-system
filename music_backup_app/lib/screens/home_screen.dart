@@ -73,7 +73,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return 'Caricamento: ${p.currentFile}\n${p.completed}/${p.total}';
       case BackupStatus.done:
         return p.total == 0
-            ? 'Nessun file audio trovato'
+            ? 'Nessun file nuovo da caricare'
             : 'Backup completato: ${p.completed}/${p.total} file';
       case BackupStatus.error:
         return p.errorMessage ?? 'Errore sconosciuto';

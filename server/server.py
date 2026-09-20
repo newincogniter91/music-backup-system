@@ -4,7 +4,8 @@ Music Backup Server
 
 Espone due servizi HTTP separati, su porte indipendenti:
   - servizio di backup: riceve i file audio inviati dall'app Android
-    (POST /upload, campo multipart "file")
+    (POST /upload, campo multipart "file") e ne elenca i nomi (GET /list),
+    così l'app manda solo i file che il server non ha ancora
   - dashboard: pagina web con stato (ultimo backup, IP di provenienza,
     numero di file salvati) e impostazioni (cartella di salvataggio,
     indirizzo di ascolto, porte)
@@ -16,6 +17,7 @@ compilato con PyInstaller.
 import asyncio
 import hashlib
 import json
+import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +37,7 @@ else:
 
 CONFIG_PATH = BASE_DIR / "config.json"
 STATE_PATH = BASE_DIR / "state.json"
+DB_PATH = BASE_DIR / "library.db"
 
 DEFAULT_CONFIG = {
     "save_path": str(BASE_DIR / "musica_ricevuta"),
@@ -76,6 +79,44 @@ config = load_config()
 state = load_state()
 
 
+# ---------------------------------------------------------------------------
+# Database dei nomi dei file presenti sul server. SQLite è già incluso in
+# Python: nessuna app o servizio da installare, è solo il file library.db
+# accanto all'eseguibile. Si identifica un file dal nome, non dall'hash.
+# ---------------------------------------------------------------------------
+db = sqlite3.connect(DB_PATH, check_same_thread=False)
+db.execute("CREATE TABLE IF NOT EXISTS files (name TEXT PRIMARY KEY)")
+db.commit()
+
+
+def register_name(name: str):
+    db.execute("INSERT OR IGNORE INTO files (name) VALUES (?)", (name,))
+    db.commit()
+
+
+def sync_db():
+    """Allinea il database alla cartella di salvataggio, solo con i nomi:
+    aggiunge i file che ci sono sul disco (es. quelli arrivati prima del
+    database o copiati a mano) e toglie i nomi dei file che non ci sono
+    più, così l'app li rimanda. Non elimina mai file dal disco."""
+    save_dir = Path(config["save_path"])
+    if not save_dir.is_dir():
+        return
+    try:
+        on_disk = {p.name for p in save_dir.iterdir() if p.is_file()}
+    except OSError:
+        return
+    in_db = {row[0] for row in db.execute("SELECT name FROM files")}
+    for name in in_db - on_disk:
+        db.execute("DELETE FROM files WHERE name = ?", (name,))
+    for name in on_disk - in_db:
+        db.execute("INSERT OR IGNORE INTO files (name) VALUES (?)", (name,))
+    db.commit()
+
+
+sync_db()
+
+
 def record_backup(request: Request):
     state["last_backup_time"] = datetime.now().isoformat(timespec="seconds")
     state["last_backup_ip"] = request.client.host if request.client else "sconosciuto"
@@ -113,6 +154,7 @@ async def upload(request: Request, file: UploadFile = File(...)):
 
         if existing_hash == incoming_hash:
             # File identico già presente: non riscrivere, evita doppioni.
+            register_name(file.filename)
             record_backup(request)
             return {"status": "skipped", "reason": "duplicate", "filename": file.filename}
 
@@ -125,8 +167,17 @@ async def upload(request: Request, file: UploadFile = File(...)):
     except OSError as e:
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
+    register_name(file.filename)
     record_backup(request)
     return {"status": "saved", "filename": target_path.name}
+
+
+@backup_app.get("/list")
+async def list_files():
+    """Nomi dei file presenti sul server (dal database)."""
+    sync_db()
+    rows = db.execute("SELECT name FROM files ORDER BY name").fetchall()
+    return {"files": [r[0] for r in rows]}
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +276,7 @@ async def update_settings(
     config["save_path"] = save_path
     config["bind_host"] = bind_host
     save_config(config)
+    sync_db()
 
     if warnings:
         msg = " ".join(warnings)

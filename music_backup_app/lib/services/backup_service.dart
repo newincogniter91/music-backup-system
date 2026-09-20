@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'settings_service.dart';
@@ -58,10 +59,25 @@ class BackupService {
     return found;
   }
 
-  /// Esegue lo scan e carica ogni file trovato con una richiesta
-  /// POST multipart separata verso http://IP:PORTA/upload.
-  /// Il campo del file nella richiesta si chiama "file" — il server
-  /// dovrà aspettarsi lo stesso nome di campo.
+  /// Chiede al server i nomi dei file che ha già (GET /list, dal suo
+  /// database).
+  static Future<Set<String>> _fetchServerNames(String ip, String port) async {
+    final response = await http
+        .get(Uri.parse('http://$ip:$port/list'))
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      throw Exception(
+          'il server ha risposto ${response.statusCode} su /list (server aggiornato?)');
+    }
+    final data =
+        jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+    return (data['files'] as List).cast<String>().toSet();
+  }
+
+  /// Esegue lo scan e carica, con una richiesta POST multipart separata
+  /// verso http://IP:PORTA/upload, solo i file il cui nome il server non
+  /// ha già (elenco da GET /list). Il campo del file nella richiesta si
+  /// chiama "file" — il server dovrà aspettarsi lo stesso nome di campo.
   static Stream<BackupProgress> runBackup() async* {
     yield BackupProgress(
       total: 0,
@@ -70,10 +86,9 @@ class BackupService {
       status: BackupStatus.scanning,
     );
 
-    final files = await scanAudioFiles();
-    final total = files.length;
+    final allFiles = await scanAudioFiles();
 
-    if (total == 0) {
+    if (allFiles.isEmpty) {
       yield BackupProgress(
         total: 0,
         completed: 0,
@@ -88,11 +103,47 @@ class BackupService {
 
     if (ip.isEmpty) {
       yield BackupProgress(
-        total: total,
+        total: allFiles.length,
         completed: 0,
         currentFile: '',
         status: BackupStatus.error,
         errorMessage: 'IP del server non configurato. Vai nelle impostazioni.',
+      );
+      return;
+    }
+
+    // Quali file ha già il server: si confrontano i nomi.
+    var serverNames = <String>{};
+    try {
+      serverNames = await _fetchServerNames(ip, port);
+    } catch (e) {
+      yield BackupProgress(
+        total: allFiles.length,
+        completed: 0,
+        currentFile: '',
+        status: BackupStatus.error,
+        errorMessage: 'Impossibile leggere l\'elenco dal server $ip:$port: $e',
+      );
+      return;
+    }
+
+    // Da inviare: solo quelli con un nome che il server non ha (e un nome
+    // presente in più cartelle si invia una volta sola).
+    final seenNames = <String>{};
+    final files = <File>[];
+    for (final file in allFiles) {
+      final name = file.path.split('/').last;
+      if (serverNames.contains(name)) continue;
+      if (seenNames.add(name)) files.add(file);
+    }
+    final total = files.length;
+
+    if (total == 0) {
+      yield BackupProgress(
+        total: 0,
+        completed: 0,
+        currentFile: '',
+        status: BackupStatus.done,
       );
       return;
     }

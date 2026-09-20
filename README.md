@@ -3,7 +3,7 @@
 Sistema per il backup automatico della musica dal telefono Android al PC, via rete privata Tailscale. Composto da due parti in questo stesso repo:
 
 - **`music_backup_app/`** — app Android (Flutter) che scansiona Download/Music e invia i file audio (`.mp3`, `.m4a`) al server
-- **`server/`** — server Linux (Python) che riceve i file, li salva, evita i doppioni, ed espone una dashboard web
+- **`server/`** — server Linux (Python) che riceve i file, li salva, evita i doppioni, tiene un piccolo database SQLite con i nomi dei file che ha, ed espone una dashboard web
 
 Nessun file viene mai eliminato, né lato app né lato server: solo aggiunte.
 
@@ -35,7 +35,8 @@ APK in `build/app/outputs/flutter-apk/app-release.apk`. Serve Flutter **3.38.0**
 
 - UI: bottone BACKUP circolare + barra di avanzamento; impostazioni con IP/porta del server e tema chiaro/scuro
 - Scansiona ricorsivamente `Download` e `Music`, cerca `.mp3`/`.m4a`
-- Ogni file trovato viene inviato con `POST http://<ip>:<porta>/upload`, corpo `multipart/form-data`, campo `file`
+- Prima chiede al server i nomi dei file che ha già (`GET http://<ip>:<porta>/list`) e invia solo quelli il cui nome manca, così non rimanda ogni volta gli stessi file
+- Ogni file da inviare va con `POST http://<ip>:<porta>/upload`, corpo `multipart/form-data`, campo `file`
 - Richiede il permesso Android **"Gestisci tutti i file"** (`MANAGE_EXTERNAL_STORAGE`), attivabile al primo tap su BACKUP
 - IP e porta del server sono configurabili dalle Impostazioni, senza bisogno di ricompilare
 
@@ -91,6 +92,14 @@ Indirizzo di ascolto di default: `0.0.0.0` (tutte le interfacce, incluso Tailsca
 - form impostazioni: cartella di salvataggio, indirizzo di ascolto, porta di backup, porta dashboard
 
 La cartella di salvataggio si applica subito; indirizzo e porte richiedono un riavvio del servizio. La porta 80 non è ammessa (richiede permessi di amministratore).
+
+### Database dei nomi
+
+Il server tiene un database SQLite (`library.db`, accanto all'eseguibile) con i nomi dei file presenti nella cartella di salvataggio. SQLite è incluso in Python: nessuna app o servizio da installare. Si identifica un file dal **nome**, non dall'hash.
+
+- `GET /list` restituisce l'elenco dei nomi, ed è ciò che l'app usa per sapere cosa manca
+- il database si allinea alla cartella all'avvio, ad ogni `/list` e quando cambi cartella dalla dashboard: i file già presenti o copiati a mano vengono aggiunti, i nomi di file spariti dal disco vengono tolti (così l'app li rimanda)
+- il server non elimina mai file dal disco
 
 ### Gestione doppioni
 
