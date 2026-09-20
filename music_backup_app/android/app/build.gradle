@@ -48,6 +48,19 @@ android {
         versionName flutterVersionName
     }
 
+    signingConfigs {
+        // Chiave di debug FISSA (debug.keystore, nel repository): così ogni
+        // build della CI ha la stessa firma e Android la installa sopra la
+        // precedente come aggiornamento. Prima la CI ne generava una nuova
+        // a ogni run, e con firme diverse l'aggiornamento non riesce.
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
     buildTypes {
         release {
             // Firmato con la chiave di debug per semplicità: per un uso

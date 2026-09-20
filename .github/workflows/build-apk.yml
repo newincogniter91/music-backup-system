@@ -39,11 +39,23 @@ jobs:
       - name: Compila APK (release)
         run: flutter build apk --release
 
+      # L'APK prende la versione nel nome (es. music-backup-1.0.2-build3.apk):
+      # ogni build ha un file diverso e non si confonde con i download
+      # precedenti. Nel log resta anche lo SHA-256 per confrontarlo.
+      - name: Dai all'APK un nome con la versione
+        id: apk
+        run: |
+          V=$(grep '^version:' pubspec.yaml | awk '{print $2}' | tr -d '\r')
+          NAME="music-backup-${V%%+*}-build${V##*+}.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "build/app/outputs/flutter-apk/$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          sha256sum "build/app/outputs/flutter-apk/$NAME"
+
       - name: Carica APK come artifact
         uses: actions/upload-artifact@v4
         with:
           name: music-backup-apk
-          path: music_backup_app/build/app/outputs/flutter-apk/app-release.apk
+          path: music_backup_app/build/app/outputs/flutter-apk/${{ steps.apk.outputs.name }}
 
   build-server:
     runs-on: ubuntu-latest

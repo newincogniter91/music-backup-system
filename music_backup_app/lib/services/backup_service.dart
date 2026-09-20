@@ -69,9 +69,34 @@ class BackupService {
       throw Exception(
           'il server ha risposto ${response.statusCode} su /list (server aggiornato?)');
     }
-    final data =
-        jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
-    return (data['files'] as List).cast<String>().toSet();
+    // Si accettano tutti i formati sensati: {"files": [...]} oppure [...],
+    // con elementi che sono nomi (stringhe) oppure oggetti con "name" /
+    // "original_name", e anche un corpo JSON codificato due volte. Se non
+    // si capisce, l'errore mostra l'inizio di ciò che ha risposto il server.
+    final body = utf8.decode(response.bodyBytes);
+    try {
+      dynamic data = jsonDecode(body);
+      if (data is String) data = jsonDecode(data);
+      final dynamic items = data is Map ? data['files'] : data;
+      if (items is! List) {
+        throw const FormatException('manca la lista dei file');
+      }
+      final names = <String>{};
+      for (final item in items) {
+        if (item is String) {
+          names.add(item);
+        } else if (item is Map) {
+          final original = item['original_name'];
+          final stored = item['name'];
+          if (original is String) names.add(original);
+          if (stored is String) names.add(stored);
+        }
+      }
+      return names;
+    } catch (e) {
+      final preview = body.length > 80 ? '${body.substring(0, 80)}...' : body;
+      throw Exception('risposta di /list non valida ($e): $preview');
+    }
   }
 
   /// Esegue lo scan e carica, con una richiesta POST multipart separata
