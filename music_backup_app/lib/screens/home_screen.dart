@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/backup_service.dart';
 import 'settings_screen.dart';
@@ -12,6 +13,18 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // Canale verso UploadService (foreground service): tiene vivo l'upload
+  // quando l'app va in background o lo schermo si spegne.
+  static const MethodChannel _service = MethodChannel('musicbackup/service');
+
+  Future<void> _serviceCall(String method, [Map<String, Object?>? args]) async {
+    try {
+      await _service.invokeMethod(method, args);
+    } catch (_) {
+      // Se il service non parte, il backup continua comunque in primo piano.
+    }
+  }
+
   BackupProgress? _progress;
   bool _isRunning = false;
 
@@ -40,16 +53,31 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    // Su Android 13+ serve il permesso notifiche per mostrare quella del
+    // service; se negato il service parte lo stesso, solo senza notifica.
+    await Permission.notification.request();
+
     setState(() {
       _isRunning = true;
       _progress = null;
     });
 
-    await for (final progress in BackupService.runBackup()) {
-      if (!mounted) return;
-      setState(() {
-        _progress = progress;
-      });
+    await _serviceCall('start', {'text': 'Preparazione backup…', 'percent': -1});
+    try {
+      await for (final progress in BackupService.runBackup()) {
+        if (progress.status == BackupStatus.uploading) {
+          await _serviceCall('update', {
+            'text': 'Caricamento ${progress.completed + 1}/${progress.total}: ${progress.currentFile}',
+            'percent': progress.total == 0 ? -1 : (progress.completed * 100 ~/ progress.total),
+          });
+        }
+        if (!mounted) return;
+        setState(() {
+          _progress = progress;
+        });
+      }
+    } finally {
+      await _serviceCall('stop');
     }
 
     if (!mounted) return;
@@ -163,7 +191,7 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 24),
             // Versione della build, per riconoscere quale APK sta girando.
             // Va tenuta uguale a `version:` in pubspec.yaml.
-            Text('v1.0.2+3', style: theme.textTheme.bodySmall),
+            Text('v1.0.3+4', style: theme.textTheme.bodySmall),
           ],
         ),
       ),
